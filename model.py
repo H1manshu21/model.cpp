@@ -41,6 +41,31 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class LayerNorm(nn.Module):
+    def __init__(self, eps: float = 10**-6):
+        super().__init__()
+        self.eps = eps
+        self.alpha = nn.Parameter(torch.ones(1))  # Multiplied
+        self.bias = nn.Parameter(torch.zeros(1))  # Added
+
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        std = x.std(dim=-1, keepdim=True)
+
+        return self.alpha * (x - mean) / (std + self.eps) * self.bias
+
+
+class FeedForwardBlock(nn.Module):
+    def __init__(self, d_model, d_ff, dropout):
+        super().__init__()
+        self.linear_1 = nn.Linear(d_model, d_ff)
+        self.dropout = nn.Dropout(dropout)
+        self.linear_2 = nn.Linear(d_ff, d_model)
+
+    def forward(self, x):
+        pass
+
+
 class MultiHeadAttention(nn.Module):
     def __init__():
         pass
