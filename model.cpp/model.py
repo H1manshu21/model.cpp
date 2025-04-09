@@ -11,6 +11,7 @@ including input embedding, positional encoding, multi-head attention, and feed-f
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 class InputEmbedding(nn.Module):
@@ -26,7 +27,9 @@ class InputEmbedding(nn.Module):
         @param d_model The dimensionality of the embeddings.
         @param vocab_size The size of the input vocabulary.
         """
-        pass
+        self.d_model = d_model
+        self.vocab_size = vocab_size
+        self.embeddings = nn.Embedding(vocab_size, d_model)
 
     def forward(self, x):
         """@brief Forward pass for the input embedding layer.
@@ -34,7 +37,7 @@ class InputEmbedding(nn.Module):
         @param x The input tensor containing token indices.
         @return The embedded representation of the input tokens.
         """
-        pass
+        return self.embeddings(x) * math.sqrt(self.d_model)
 
 
 class PositionalEncoding(nn.Module):
