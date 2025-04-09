@@ -1,11 +1,12 @@
-"""@package model
+"""@package docstring
 @brief This module implements neural network components.
 
 @details This module contains classes and functions for building a neural network,
 including input embedding, positional encoding, multi-head attention, and feed-forward layers.
 
-@todo Implement InputEmbedding class. (By Ajay)
-@todo Implement PositionalEncoding class. (By Himanshu)
+@todo Implement LayerNorm class. (By Ajay)
+@todo Implement FeedForwardBlock class. (By Himanshu)
+@todo Verify InputEmbedding and PositionalEncoding class by randn inputs. (By Ajay & Himanshu)
 """
 
 import torch
@@ -27,6 +28,7 @@ class InputEmbedding(nn.Module):
         @param d_model The dimensionality of the embeddings.
         @param vocab_size The size of the input vocabulary.
         """
+        super().__init__()
         self.d_model = d_model
         self.vocab_size = vocab_size
         self.embeddings = nn.Embedding(vocab_size, d_model)
@@ -41,11 +43,46 @@ class InputEmbedding(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self):
-        pass
+    """@brief Implements the Positional Encoding for the model.
 
-    def forward(self):
-        pass
+    @details This class add Input Embedding with Positional Encoding.
+    Sine and Cosine functions are used here to calculate positional encoding.
+    """
+
+    def __init__(self, seq_len, d_model, dropout):
+        """@brief Initializes the PositionalEncoding class.
+
+        @param seq_len The input tensor containing token indices.
+        @param d_model The dimensionality of the embeddings..
+        @param dropout The Probability of an element to be zeroed.
+        """
+        super().__init__()
+        self.seq_len = seq_len
+        self.d_model = d_model
+        self.dropout = nn.Dropout(dropout)
+
+        pos_encoding = torch.zeros(seq_len, d_model)
+        pos = torch.arange(0, d_model, dtype=torch.float32).unsqueeze(1)
+
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32)
+            * -(torch.log(10000))
+            / d_model
+        )
+        pos_encoding[:, 0::2] = torch.sin(pos * div_term)
+        pos_encoding[:, 1::2] = torch.cos(pos * div_term)
+        pos_encoding = pos_encoding.unsqueeze(0)
+
+        self.register_buffer("pos_encoding", pos_encoding)
+
+    def forward(self, x):
+        """@brief Forward pass for the positional encoding layer.
+
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        """
+        seq_len = x.shape(1)
+        return x + self.pos_encoding[:, :seq_len, :]
 
 
 class LayerNorm(nn.Module):
