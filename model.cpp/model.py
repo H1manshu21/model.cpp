@@ -1,12 +1,10 @@
-"""@package docstring
+"""@package model
 @brief This module implements neural network components.
 
 @details This module contains classes and functions for building a neural network,
 including input embedding, positional encoding, multi-head attention, and feed-forward layers.
 
 @todo Implement LayerNorm class. (By Ajay)
-@todo Implement FeedForwardBlock class. (By Himanshu)
-@todo Verify InputEmbedding and PositionalEncoding class by randn inputs. (By Ajay & Himanshu)
 """
 
 import torch
@@ -36,8 +34,8 @@ class InputEmbedding(nn.Module):
     def forward(self, x):
         """@brief Forward pass for the input embedding layer.
 
-        @param x The input tensor containing token indices.
-        @return The embedded representation of the input tokens.
+        @param x The input tensor containing token indices of shape [batch_size, seq_len, d_model].
+        @return The embedded representation of the input tokens of shape [batch_size, seq_len, d_model].
         """
         return self.embeddings(x) * math.sqrt(self.d_model)
 
@@ -53,7 +51,7 @@ class PositionalEncoding(nn.Module):
         """@brief Initializes the PositionalEncoding class.
 
         @param seq_len The input tensor containing token indices.
-        @param d_model The dimensionality of the embeddings..
+        @param d_model The dimensionality of the embeddings.
         @param dropout The Probability of an element to be zeroed.
         """
         super().__init__()
@@ -62,11 +60,11 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         pos_encoding = torch.zeros(seq_len, d_model)
-        pos = torch.arange(0, d_model, dtype=torch.float32).unsqueeze(1)
+        pos = torch.arange(0, seq_len, dtype=torch.float32).unsqueeze(1)
 
         div_term = torch.exp(
             torch.arange(0, d_model, 2, dtype=torch.float32)
-            * -(torch.log(10000))
+            * -(math.log(10000.0))
             / d_model
         )
         pos_encoding[:, 0::2] = torch.sin(pos * div_term)
@@ -81,8 +79,9 @@ class PositionalEncoding(nn.Module):
         @param x The input tensor of shape [batch_size, seq_len, d_model].
         @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
         """
-        seq_len = x.shape(1)
-        return x + self.pos_encoding[:, :seq_len, :]
+        seq_len = x.shape[1]
+        x = x + (self.pos_encoding[:, :seq_len, :]).requires_grad_(False)
+        return self.dropout(x)
 
 
 class LayerNorm(nn.Module):
@@ -94,31 +93,136 @@ class LayerNorm(nn.Module):
 
 
 class FeedForwardBlock(nn.Module):
-    def __init__(self):
-        pass
+    """@brief Implements the Position-wise Feed-Forward Network.
 
-    def forward(self):
-        pass
+    @details This class consists of two linear transformations with a ReLU activation in between.
+    """
+
+    def __init__(self, d_model, d_ff, dropout):
+        """@brief Initializes the PositionalEncoding class.
+
+        @param d_model  The dimensionality of input(in_features).
+        @param d_ff The inner-layer dimensionality.
+        @param dropout The Probability of an element to be zeroed.
+        """
+        super().__init__()
+        self.layer_1 = nn.Linear(d_model, d_ff, bias=True)
+        self.layer_2 = nn.Linear(d_model, d_ff, bias=True)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """@brief Forward pass for the position-wise Feed-Forward networks.
+
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        """
+        x = self.layer_1(x)
+        x = nn.ReLU(x)
+        x = self.dropout(x)
+        x = self.layer2(x)
+
+        return x
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__():
-        pass
+    def __init__(self, d_model, num_heads, dropout):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
 
-    def forward():
-        pass
+        assert d_model % num_heads == 0, "d_model is not divisble by num_heads"
+        self.d_k = d_model // num_heads
+
+        self.q_proj = nn.Linear(d_model, d_model, bias=True)
+        self.k_proj = nn.Linear(d_model, d_model, bias=True)
+        self.v_proj = nn.Linear(d_model, d_model, bias=True)
+
+        self.w_o = nn.Linear(d_model, d_model, bias=True)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, q, k, v, mask=None):
+        """@brief Forward pass for Multi.
+
+        @param q The input tensor of shape [batch_size, seq_len, d_model].
+        @param k The input tensor of shape [batch_size, seq_len, d_model].
+        @param v The input tensor of shape [batch_size, seq_len, d_model].
+        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        """
+        query = self.q_proj(q)
+        key = self.k_proj(k)
+        value = self.v_proj(v)
+
+        query = query.view(q.shape[0], q.shape[1], self.num_heads, self.d_k).transpose(
+            1, 2
+        )
+        key = key.view(k.shape[0], k.shape[1], self.num_heads, self.d_k).transpose(1, 2)
+        value = value.view(v.shape[0], v.shape[1], self.num_heads, self.d_k).transpose(
+            1, 2
+        )
+
+        x, self.attn_scores = MultiHeadAttention.scaled_dot_product_attention(
+            query, key, value, mask, self.dropout
+        )
+
+        x = (
+            x.transpose(1, 2)
+            .contiguous()
+            .view(x.shape[0], -1, self.num_heads * self.d_k)
+        )
+
+        return self.w_o(x)
+
+    @staticmethod
+    def scaled_dot_product_attention(query, key, value, mask, dropout: nn.Dropout):
+        """@brief Computes scaled dot-product attention.
+
+        @details This function calculates the attention weights based on the query,
+        key, and value matrices. Optionally, a mask can be applied to ignore certain positions.
+
+        @param query The query matrix (batch_size x num_heads x seq_len x depth).
+        @param key The key matrix (batch_size x num_heads x seq_len x depth).
+        @param value The value matrix (batch_size x num_heads x seq_len x depth).
+        @param mask Optional mask to apply (default is None).
+        @param dropout Optional mask to apply (default is None).
+        @return Attention output and attention weights.
+        """
+        d_k = query.shape[-1]
+
+        attn_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
+        if mask is not None:
+            attn_scores.masked_fill(mask == 0, -1e9)
+        attn_scores = attn_scores.softmax(dim=-1)
+
+        if dropout is not None:
+            attn_scores = dropout(attn_scores)
+
+        return (attn_scores @ value), attn_scores
 
 
-def scaled_dot_product_attention(query, key, value, mask=None):
-    """@brief Computes scaled dot-product attention.
+def main():
+    d_model = 50
+    vocab_size = 100
+    seq_len = 4
+    batch_size = 1
+    dropout = 0.1
+    num_heads = 2
+    d_k = d_model // num_heads
 
-    @details This function calculates the attention weights based on the query,
-    key, and value matrices. Optionally, a mask can be applied to ignore certain positions.
+    x = torch.randint(1, 10, (batch_size, seq_len))
+    print(f"X.shape: {x.shape}, dtype: {x.dtype}")
 
-    @param query The query matrix (batch_size x num_heads x seq_len x depth).
-    @param key The key matrix (batch_size x num_heads x seq_len x depth).
-    @param value The value matrix (batch_size x num_heads x seq_len x depth).
-    @param mask Optional mask to apply (default is None).
-    @return Attention output and attention weights.
-    """
-    pass
+    ie = InputEmbedding(d_model, vocab_size)
+    x = ie(x)
+    print(f"InputEmbedding.shape: {x.shape}, dtype: {x.dtype}")
+
+    pe = PositionalEncoding(seq_len, d_model, dropout)
+    x = pe(x)
+    print(f"PositionalEncoding.shape: {x.shape}, dtype: {x.dtype}")
+
+    mha = MultiHeadAttention(d_model, num_heads, 0.1)
+    x = mha(x, x, x)
+    print(f"MultiHeadAttention.shape: {x.shape}, dtype: {x.dtype}")
+
+
+if __name__ == "__main__":
+    main()
