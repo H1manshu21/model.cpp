@@ -34,7 +34,7 @@ class InputEmbedding(nn.Module):
     def forward(self, x):
         """@brief Forward pass for the input embedding layer.
 
-        @param x The input tensor containing token indices of shape [batch_size, seq_len, d_model].
+        @param x The input tensor containing token indices of shape [batch_size, seq_len].
         @return The embedded representation of the input tokens of shape [batch_size, seq_len, d_model].
         """
         return self.embeddings(x) * math.sqrt(self.d_model)
@@ -43,7 +43,7 @@ class InputEmbedding(nn.Module):
 class PositionalEncoding(nn.Module):
     """@brief Implements the Positional Encoding for the model.
 
-    @details This class add Input Embedding with Positional Encoding.
+    @details This class adds Input Embedding with Positional Encoding.
     Sine and Cosine functions are used here to calculate positional encoding.
     """
 
@@ -77,7 +77,7 @@ class PositionalEncoding(nn.Module):
         """@brief Forward pass for the positional encoding layer.
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
-        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        @return Output tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
         """
         seq_len = x.shape[1]
         x = x + (self.pos_encoding[:, :seq_len, :]).requires_grad_(False)
@@ -95,14 +95,14 @@ class LayerNorm(nn.Module):
 class FeedForwardBlock(nn.Module):
     """@brief Implements the Position-wise Feed-Forward Network.
 
-    @details This class consists of two linear transformations with a ReLU activation in between.
+    @details This class consists of two linear transformations with a ReLU activation in between and dropout.
     """
 
     def __init__(self, d_model, d_ff, dropout):
         """@brief Initializes the PositionalEncoding class.
 
-        @param d_model  The dimensionality of input(in_features).
-        @param d_ff The inner-layer dimensionality.
+        @param d_model The dimensionality of input(in_features).
+        @param d_ff The inner-layer dimensionality(out_features).
         @param dropout The Probability of an element to be zeroed.
         """
         super().__init__()
@@ -114,7 +114,7 @@ class FeedForwardBlock(nn.Module):
         """@brief Forward pass for the position-wise Feed-Forward networks.
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
-        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        @return Output tensor of shape [batch_size, seq_len, d_model].
         """
         x = self.layer_1(x)
         x = nn.ReLU(x)
@@ -125,7 +125,20 @@ class FeedForwardBlock(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
+    """@brief Implements the Multi-Head Attention.
+
+    @details Projects the input into query, key, and value vectors, splits them into multiple heads,
+    performs scaled dot-product attention for each head, and combines the results.
+    Uses dropout for regularization and a final linear layer to project the output.
+    """
+
     def __init__(self, d_model, num_heads, dropout):
+        """@brief Initializes the MultiHeadAttention class.
+
+        @param d_model The dimensionality of input(in_features).
+        @param num_heads The inner-layer dimensionality(out_features).
+        @param dropout The Probability of an element to be zeroed.
+        """
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -141,12 +154,13 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, q, k, v, mask=None):
-        """@brief Forward pass for Multi.
+        """@brief Forward pass for Multi-Head Attention.
 
-        @param q The input tensor of shape [batch_size, seq_len, d_model].
-        @param k The input tensor of shape [batch_size, seq_len, d_model].
-        @param v The input tensor of shape [batch_size, seq_len, d_model].
-        @return Tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        @param q The query tensor of shape [batch_size, seq_len, d_model].
+        @param k The key tensor of shape [batch_size, seq_len, d_model].
+        @param v The value tensor of shape [batch_size, seq_len, d_model].
+        @param mask Optional attention mask. Set default to None.
+        @return Output tensor of shape [batch_size, seq_len, d_model].
         """
         query = self.q_proj(q)
         key = self.k_proj(k)
@@ -179,12 +193,14 @@ class MultiHeadAttention(nn.Module):
         @details This function calculates the attention weights based on the query,
         key, and value matrices. Optionally, a mask can be applied to ignore certain positions.
 
-        @param query The query matrix (batch_size x num_heads x seq_len x depth).
-        @param key The key matrix (batch_size x num_heads x seq_len x depth).
-        @param value The value matrix (batch_size x num_heads x seq_len x depth).
+        @param query The query matrix of shape [batch_size, num_heads, seq_len, d_k].
+        @param key The key matrix of shape [batch_size, num_heads, seq_len, d_k].
+        @param value The value matrix of shape [batch_size, num_heads, seq_len, d_k].
         @param mask Optional mask to apply (default is None).
         @param dropout Optional mask to apply (default is None).
-        @return Attention output and attention weights.
+        @return Output tensor Attention output and attention scores
+        of shape [batch_size, num_heads, seq_len, d_k] and
+        [batch_size, num_heads, seq_len, seq_len] respectively.
         """
         d_k = query.shape[-1]
 
