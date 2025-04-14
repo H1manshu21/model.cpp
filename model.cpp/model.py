@@ -85,11 +85,19 @@ class PositionalEncoding(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    def __init__(self):
-        pass
+    def __init__(self, eps):
+        super().__init__()
+        self.eps = eps
+        self.gama = nn.Parameter(torch.ones(1))
+        self.bias = nn.Parameter(torch.zeros(1))
 
-    def forward(self):
-        pass
+    def forward(self, x):
+        self.mean = torch.mean(x, -1, keepdim=True)
+        self.var = torch.var(x, dim=1, keepdim=True)
+
+        return (
+            self.gama * (x - self.mean) / (torch.sqrt(self.var) + self.eps) + self.bias
+        )
 
 
 class FeedForwardBlock(nn.Module):
