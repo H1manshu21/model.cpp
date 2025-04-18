@@ -3,13 +3,10 @@
 
 @details This module contains classes and functions for building a neural network,
 including input embedding, positional encoding, multi-head attention, and feed-forward layers.
-
-@todo Implement LayerNorm class. (By Ajay)
 """
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import math
 
 
@@ -31,7 +28,7 @@ class InputEmbedding(nn.Module):
         self.vocab_size = vocab_size
         self.embeddings = nn.Embedding(vocab_size, d_model)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         """@brief Forward pass for the input embedding layer.
 
         @param x The input tensor containing token indices of shape [batch_size, seq_len].
@@ -50,7 +47,7 @@ class PositionalEncoding(nn.Module):
     def __init__(self, seq_len, d_model, dropout):
         """@brief Initializes the PositionalEncoding class.
 
-        @param seq_len The input tensor containing token indices.
+        @param seq_len The maximum input sequence length.
         @param d_model The dimensionality of the embeddings.
         @param dropout The Probability of an element to be zeroed.
         """
@@ -73,7 +70,7 @@ class PositionalEncoding(nn.Module):
 
         self.register_buffer("pos_encoding", pos_encoding)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         """@brief Forward pass for the positional encoding layer.
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
@@ -85,19 +82,32 @@ class PositionalEncoding(nn.Module):
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, eps):
+    """@brief Implements the Layer Normalization.
+
+    @details This class normalizes MHA and Feed Forward Block.
+    """
+
+    def __init__(self, eps, d_model):
+        """@brief Initializes the LayerNorm class.
+
+        @param eps Used to avoid Divide by Zero Error
+        @param d_model The dimensionality of the embeddings.
+        """
         super().__init__()
         self.eps = eps
-        self.gama = nn.Parameter(torch.ones(1))
-        self.bias = nn.Parameter(torch.zeros(1))
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.bias = nn.Parameter(torch.zeros(d_model))
 
-    def forward(self, x):
-        self.mean = torch.mean(x, -1, keepdim=True)
-        self.var = torch.var(x, dim=1, keepdim=True)
+    def forward(self, x: torch.Tensor):
+        """@brief Forward pass for the Layer Normalization.
 
-        return (
-            self.gama * (x - self.mean) / (torch.sqrt(self.var) + self.eps) + self.bias
-        )
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @return Output tensor with normalized shape of [batch_size, seq_len, d_model].
+        """
+        mean = torch.mean(x, -1, keepdim=True)
+        var = torch.var(x, dim=-1, keepdim=True)
+
+        return self.gamma * (x - mean) / (torch.sqrt(var) + self.eps) + self.bias
 
 
 class FeedForwardBlock(nn.Module):
@@ -107,7 +117,7 @@ class FeedForwardBlock(nn.Module):
     """
 
     def __init__(self, d_model, d_ff, dropout):
-        """@brief Initializes the PositionalEncoding class.
+        """@brief Initializes the FeedForwardBlock class.
 
         @param d_model The dimensionality of input(in_features).
         @param d_ff The inner-layer dimensionality(out_features).
@@ -115,19 +125,20 @@ class FeedForwardBlock(nn.Module):
         """
         super().__init__()
         self.layer_1 = nn.Linear(d_model, d_ff, bias=True)
-        self.layer_2 = nn.Linear(d_model, d_ff, bias=True)
+        self.layer_2 = nn.Linear(d_ff, d_model, bias=True)
         self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         """@brief Forward pass for the position-wise Feed-Forward networks.
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
         @return Output tensor of shape [batch_size, seq_len, d_model].
         """
         x = self.layer_1(x)
-        x = nn.ReLU(x)
+        x = self.relu(x)
         x = self.dropout(x)
-        x = self.layer2(x)
+        x = self.layer_2(x)
 
         return x
 
@@ -161,7 +172,7 @@ class MultiHeadAttention(nn.Module):
         self.w_o = nn.Linear(d_model, d_model, bias=True)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask=None):
         """@brief Forward pass for Multi-Head Attention.
 
         @param q The query tensor of shape [batch_size, seq_len, d_model].
@@ -182,7 +193,7 @@ class MultiHeadAttention(nn.Module):
             1, 2
         )
 
-        x, self.attn_scores = MultiHeadAttention.scaled_dot_product_attention(
+        x, attn_scores = MultiHeadAttention.scaled_dot_product_attention(
             query, key, value, mask, self.dropout
         )
 
@@ -195,7 +206,13 @@ class MultiHeadAttention(nn.Module):
         return self.w_o(x)
 
     @staticmethod
-    def scaled_dot_product_attention(query, key, value, mask, dropout: nn.Dropout):
+    def scaled_dot_product_attention(
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        mask,
+        dropout: nn.Dropout,
+    ):
         """@brief Computes scaled dot-product attention.
 
         @details This function calculates the attention weights based on the query,
@@ -214,7 +231,7 @@ class MultiHeadAttention(nn.Module):
 
         attn_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
         if mask is not None:
-            attn_scores.masked_fill(mask == 0, -1e9)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
         attn_scores = attn_scores.softmax(dim=-1)
 
         if dropout is not None:
@@ -223,14 +240,37 @@ class MultiHeadAttention(nn.Module):
         return (attn_scores @ value), attn_scores
 
 
+class ResidualConnection(nn.Module):
+    def __init__(self, eps, d_model, dropout):
+        super().__init__()
+        self.norm = LayerNorm(eps, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, sublayer: nn.Module):
+        return x + self.dropout(sublayer(self.norm(x)))
+
+class EncoderBlock(nn.Module):
+    def __init__(self , d_model , num_heads , dropout , d_ff , eps):
+        super().__init__()
+        self.mha = MultiHeadAttention(d_model, num_heads, dropout)
+        self.residual = ResidualConnection(eps, d_model, dropout)
+        self.ffn = FeedForwardBlock(d_model, d_ff, dropout)
+    def forward(self):
+        x = self.mha(x, x, x)
+        x = self.residual(x, lambda x: self.mha(x, x, x))
+        self.feed_forward = self.ffn(x)
+        x = self.residual(x, self.feed_forward)
+        return x
+
 def main():
-    d_model = 50
-    vocab_size = 100
-    seq_len = 4
-    batch_size = 1
+    d_model = 512
+    vocab_size = 10000
+    seq_len = 128
+    batch_size = 10
     dropout = 0.1
-    num_heads = 2
-    d_k = d_model // num_heads
+    num_heads = 8
+    d_ff = 2048
+    eps = 1e-5
 
     x = torch.randint(1, 10, (batch_size, seq_len))
     print(f"X.shape: {x.shape}, dtype: {x.dtype}")
@@ -243,9 +283,20 @@ def main():
     x = pe(x)
     print(f"PositionalEncoding.shape: {x.shape}, dtype: {x.dtype}")
 
-    mha = MultiHeadAttention(d_model, num_heads, 0.1)
-    x = mha(x, x, x)
-    print(f"MultiHeadAttention.shape: {x.shape}, dtype: {x.dtype}")
+    encoder_block = EncoderBlock(d_model , num_heads , dropout , d_ff , eps)
+    x = encoder_block(x)
+
+    # mha = MultiHeadAttention(d_model, num_heads, dropout)
+    # x = mha(x, x, x)
+    # print(f"MultiHeadAttention.shape: {x.shape}, dtype: {x.dtype}")
+
+    # residual = ResidualConnection(eps, d_model, dropout)
+    # x = residual(x, lambda x: mha(x, x, x))
+    # print(f"After Residual(MHA).shape: {x.shape}, dtype: {x.dtype}")
+
+    # ffn = FeedForwardBlock(d_model, d_ff, dropout)
+    # x = residual(x, ffn)
+    print(f"After Residual(FFN).shape: {x.shape}, dtype: {x.dtype}")
 
 
 if __name__ == "__main__":
