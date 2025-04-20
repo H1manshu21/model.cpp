@@ -5,9 +5,9 @@
 including input embedding, positional encoding, multi-head attention, and feed-forward layers.
 """
 
+import math
 import torch
 import torch.nn as nn
-import math
 
 
 class InputEmbedding(nn.Module):
@@ -32,7 +32,8 @@ class InputEmbedding(nn.Module):
         """@brief Forward pass for the input embedding layer.
 
         @param x The input tensor containing token indices of shape [batch_size, seq_len].
-        @return The embedded representation of the input tokens of shape [batch_size, seq_len, d_model].
+        @return The embedded representation of the input tokens of
+        shape [batch_size, seq_len, d_model].
         """
         return self.embeddings(x) * math.sqrt(self.d_model)
 
@@ -74,7 +75,8 @@ class PositionalEncoding(nn.Module):
         """@brief Forward pass for the positional encoding layer.
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
-        @return Output tensor with positional encoding added with input emebedding of shape [batch_size, seq_len, d_model].
+        @return Output tensor with positional encoding added with
+        input emebedding of shape [batch_size, seq_len, d_model].
         """
         seq_len = x.shape[1]
         x = x + (self.pos_encoding[:, :seq_len, :]).requires_grad_(False)
@@ -113,7 +115,8 @@ class LayerNorm(nn.Module):
 class FeedForwardBlock(nn.Module):
     """@brief Implements the Position-wise Feed-Forward Network.
 
-    @details This class consists of two linear transformations with a ReLU activation in between and dropout.
+    @details This class consists of two linear transformations with
+    a ReLU activation in between and dropout.
     """
 
     def __init__(self, d_model, d_ff, dropout):
@@ -242,25 +245,74 @@ class MultiHeadAttention(nn.Module):
 
 class ResidualConnection(nn.Module):
     def __init__(self, eps, d_model, dropout):
+        """@brief Initializes the Residual Connection class.
+
+        @param eps Epsilon for layer norm.
+        @param d_model The dimensionality of the embeddings.
+        @param dropout The Probability of an element to be zeroed.
+        """
         super().__init__()
         self.norm = LayerNorm(eps, d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor, sublayer: nn.Module):
+    def forward(self, x: torch.Tensor, sublayer: nn.Module) -> torch.Tensor:
+        """@brief Forward pass for ResidualConnection.
+
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @param sublayer The function implemented by the sub-layer itself which includes MHA and FFN.
+        @return Output tensor of shape [batch_size, seq_len, d_model].
+        """
         return x + self.dropout(sublayer(self.norm(x)))
 
+
 class EncoderBlock(nn.Module):
-    def __init__(self , d_model , num_heads , dropout , d_ff , eps):
+    """@brief Implements the Encoder Block.
+
+    @details Initializes MHA -> Residual_MHA -> FFN -> Residual_FFN.
+    """
+
+    def __init__(self, d_model, num_heads, dropout, d_ff, eps):
         super().__init__()
         self.mha = MultiHeadAttention(d_model, num_heads, dropout)
-        self.residual = ResidualConnection(eps, d_model, dropout)
+        self.residual_mha = ResidualConnection(eps, d_model, dropout)
         self.ffn = FeedForwardBlock(d_model, d_ff, dropout)
-    def forward(self):
-        x = self.mha(x, x, x)
-        x = self.residual(x, lambda x: self.mha(x, x, x))
-        self.feed_forward = self.ffn(x)
-        x = self.residual(x, self.feed_forward)
+        self.residual_ffn = ResidualConnection(eps, d_model, dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.residual_mha(x, lambda x: self.mha(x, x, x))
+        x = self.residual_ffn(x, lambda x: self.ffn(x))
         return x
+
+
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        d_model,
+        vocab_size,
+        num_heads,
+        dropout,
+        d_ff,
+        eps,
+        num_layers,
+        max_len=512,
+    ):
+        super().__init__()
+        self.input_embedding = InputEmbedding(d_model, vocab_size)
+        self.positional_encoding = PositionalEncoding(max_len, d_model, dropout)
+        self.layers = nn.ModuleList(
+            [
+                EncoderBlock(d_model, num_heads, dropout, d_ff, eps)
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.input_embedding(x)
+        x = self.positional_encoding(x)
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
 
 def main():
     d_model = 512
@@ -271,32 +323,16 @@ def main():
     num_heads = 8
     d_ff = 2048
     eps = 1e-5
+    num_layers = 6
 
     x = torch.randint(1, 10, (batch_size, seq_len))
     print(f"X.shape: {x.shape}, dtype: {x.dtype}")
 
-    ie = InputEmbedding(d_model, vocab_size)
-    x = ie(x)
-    print(f"InputEmbedding.shape: {x.shape}, dtype: {x.dtype}")
-
-    pe = PositionalEncoding(seq_len, d_model, dropout)
-    x = pe(x)
-    print(f"PositionalEncoding.shape: {x.shape}, dtype: {x.dtype}")
-
-    encoder_block = EncoderBlock(d_model , num_heads , dropout , d_ff , eps)
-    x = encoder_block(x)
-
-    # mha = MultiHeadAttention(d_model, num_heads, dropout)
-    # x = mha(x, x, x)
-    # print(f"MultiHeadAttention.shape: {x.shape}, dtype: {x.dtype}")
-
-    # residual = ResidualConnection(eps, d_model, dropout)
-    # x = residual(x, lambda x: mha(x, x, x))
-    # print(f"After Residual(MHA).shape: {x.shape}, dtype: {x.dtype}")
-
-    # ffn = FeedForwardBlock(d_model, d_ff, dropout)
-    # x = residual(x, ffn)
-    print(f"After Residual(FFN).shape: {x.shape}, dtype: {x.dtype}")
+    encoder = Encoder(
+        d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, seq_len
+    )
+    x = encoder(x)
+    print(f"Encoder.shape: {x.shape}, dtype: {x.dtype}")
 
 
 if __name__ == "__main__":
