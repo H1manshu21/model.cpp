@@ -76,7 +76,7 @@ class PositionalEncoding(nn.Module):
 
         @param x The input tensor of shape [batch_size, seq_len, d_model].
         @return Output tensor with positional encoding added with
-        input emebedding of shape [batch_size, seq_len, d_model].
+        input embedding of shape [batch_size, seq_len, d_model].
         """
         seq_len = x.shape[1]
         x = x + (self.pos_encoding[:, :seq_len, :]).requires_grad_(False)
@@ -181,7 +181,7 @@ class MultiHeadAttention(nn.Module):
         @param q The query tensor of shape [batch_size, seq_len, d_model].
         @param k The key tensor of shape [batch_size, seq_len, d_model].
         @param v The value tensor of shape [batch_size, seq_len, d_model].
-        @param mask Optional attention mask. Set default to None.
+        @param mask Optional attention mask. Set default to None. The mask tensor of shape [batch_size, 1, 1, seq_len].
         @return Output tensor of shape [batch_size, seq_len, d_model].
         """
         query = self.q_proj(q)
@@ -213,7 +213,7 @@ class MultiHeadAttention(nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        mask,
+        mask: torch.Tensor,
         dropout: nn.Dropout,
     ):
         """@brief Computes scaled dot-product attention.
@@ -224,7 +224,7 @@ class MultiHeadAttention(nn.Module):
         @param query The query matrix of shape [batch_size, num_heads, seq_len, d_k].
         @param key The key matrix of shape [batch_size, num_heads, seq_len, d_k].
         @param value The value matrix of shape [batch_size, num_heads, seq_len, d_k].
-        @param mask Optional mask to apply (default is None).
+        @param mask Optional mask to apply (default is None). The mask tensor of shape [batch_size, 1, 1, seq_len].
         @param dropout Optional mask to apply (default is None).
         @return Output tensor Attention output and attention scores
         of shape [batch_size, num_heads, seq_len, d_k] and
@@ -244,6 +244,11 @@ class MultiHeadAttention(nn.Module):
 
 
 class ResidualConnection(nn.Module):
+    """@brief Implements the Residual Connection Class.
+
+    @details This class initializes LayerNorm and nn.Dropout.
+    """
+
     def __init__(self, eps, d_model, dropout):
         """@brief Initializes the Residual Connection class.
 
@@ -266,25 +271,44 @@ class ResidualConnection(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """@brief Implements the Encoder Block.
+    """@brief Implements the EncoderBlock.
 
     @details Initializes MHA -> Residual_MHA -> FFN -> Residual_FFN.
     """
 
     def __init__(self, d_model, num_heads, dropout, d_ff, eps):
+        """@brief Initializes the EncoderBlock class.
+
+        @param d_model The dimensionality of the embeddings.
+        @param num_heads The number of heads.
+        @param dropout The Probability of an element to be zeroed.
+        @param d_ff The outer layer dimension.
+        @param eps Epsilon for layer norm.
+        """
         super().__init__()
         self.mha = MultiHeadAttention(d_model, num_heads, dropout)
         self.residual_mha = ResidualConnection(eps, d_model, dropout)
         self.ffn = FeedForwardBlock(d_model, d_ff, dropout)
         self.residual_ffn = ResidualConnection(eps, d_model, dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.residual_mha(x, lambda x: self.mha(x, x, x))
+    def forward(self, x: torch.Tensor, src_mask: torch.Tensor = None) -> torch.Tensor:
+        """@brief Forward pass for EncoderBlock.
+
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @param src_mask The src_mask tensor of shape [batch_size, 1, 1, seq_len].
+        @return The output tensor of shape [batch_size, seq_len, d_model].
+        """
+        x = self.residual_mha(x, lambda x: self.mha(x, x, x, src_mask))
         x = self.residual_ffn(x, lambda x: self.ffn(x))
         return x
 
 
 class Encoder(nn.Module):
+    """@brief Implements the Encoder class.
+
+    @details Initializes InputEmbedding, PositionalEncoding and EncoderBlock.
+    """
+
     def __init__(
         self,
         d_model,
@@ -294,11 +318,22 @@ class Encoder(nn.Module):
         d_ff,
         eps,
         num_layers,
-        max_len=512,
+        max_seq_len=512,
     ):
+        """@brief Initializes the Encoder class.
+
+        @param d_model The dimensionality of the embeddings.
+        @param vocab_size The size of the input vocabulary.
+        @param num_heads The number of parallel attention layers or heads.
+        @param dropout The Probability of an element to be zeroed.
+        @param d_ff The dimensionality of the inner-layer.
+        @param eps Epsilon for layer norm.
+        @param num_layers The number of encoder layers.
+        @param max_seq_len The maximum size of input tokens.
+        """
         super().__init__()
         self.input_embedding = InputEmbedding(d_model, vocab_size)
-        self.positional_encoding = PositionalEncoding(max_len, d_model, dropout)
+        self.positional_encoding = PositionalEncoding(max_seq_len, d_model, dropout)
         self.layers = nn.ModuleList(
             [
                 EncoderBlock(d_model, num_heads, dropout, d_ff, eps)
@@ -306,11 +341,110 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, src_mask: torch.Tensor = None) -> torch.Tensor:
+        """@brief Forward pass for Encoder class.
+
+        @param x The input tensor of shape [batch_size, seq_len].
+        @param src_mask The src_mask tensor of shape [batch_size, 1, 1, seq_len].
+        @return The output tensor of shape [batch_size, seq_len, d_model].
+        """
         x = self.input_embedding(x)
         x = self.positional_encoding(x)
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, src_mask)
+        return x
+
+
+class DecoderBlock(nn.Module):
+    """@brief Implements the Decoder Block.
+
+    @details Initializes Masked MHA -> Residual_Masked_MHA -> MHA -> Residual_MHA -> FFN -> Residual_FFN.
+    """
+
+    def __init__(self, d_model, num_heads, d_ff, eps, dropout):
+        """@brief Initializes the DecoderBlock class.
+
+        @param d_model The dimensionality of the embeddings.
+        @param num_heads The number of heads.
+        @param d_ff The outer layer dimension.
+        @param eps Epsilon for layer norm.
+        @param dropout The Probability of an element to be zeroed.
+        """
+
+        super().__init__()
+        self.masked_mha = MultiHeadAttention(d_model, num_heads, dropout)
+        self.residual_masked_mha = ResidualConnection(eps, d_model, dropout)
+        self.mha = MultiHeadAttention(d_model, num_heads, dropout)
+        self.residual_mha = ResidualConnection(eps, d_model, dropout)
+        self.ffn = FeedForwardBlock(d_model, d_ff, dropout)
+        self.residual_ffn = ResidualConnection(eps, d_model, dropout)
+
+    def forward(self, x, encoder_output, tgt_mask):
+        """@brief Forward pass for DecoderBlock.
+
+        @param x The input tensor of shape [batch_size, seq_len, d_model].
+        @param encoder_output The output tensor of encoder block of shape [batch_size, seq_len, d_model].
+        @param tgt_mask The tgt_mask tensor of shape [1, 1, seq_len, seq_len].
+        @return The output tensor of shape [batch_size, seq_len, d_model].
+        """
+        x = self.residual_masked_mha(
+            x, lambda x: self.masked_mha(x, x, x, mask=tgt_mask)
+        )
+        x = self.residual_mha(x, lambda x: self.mha(x, encoder_output, encoder_output))
+        x = self.residual_ffn(x, lambda x: self.ffn(x))
+        return x
+
+
+class Decoder(nn.Module):
+    """@brief Implements the Decoder class.
+
+    @details Initializes InputEmbedding, PositionalEncoding and DecoderBlock.
+    """
+
+    def __init__(
+        self,
+        d_model,
+        vocab_size,
+        num_heads,
+        dropout,
+        d_ff,
+        eps,
+        num_layers,
+        max_seq_len=512,
+    ):
+        """@brief Initializes the Decoder class.
+
+        @param d_model The dimensionality of the embeddings.
+        @param vocab_size The size of the input vocabulary.
+        @param num_heads The number of parallel attention layers or heads.
+        @param dropout The Probability of an element to be zeroed.
+        @param d_ff The dimensionality of the inner-layer.
+        @param eps Epsilon for layer norm.
+        @param num_layers The number of encoder layers.
+        @param max_seq_len The maximum size of input tokens.
+        """
+        super().__init__()
+        self.input_embedding = InputEmbedding(d_model, vocab_size)
+        self.positional_encoding = PositionalEncoding(max_seq_len, d_model, dropout)
+        self.layers = nn.ModuleList(
+            [
+                DecoderBlock(d_model, num_heads, d_ff, eps, dropout)
+                for _ in range(num_layers)
+            ]
+        )
+
+    def forward(self, x, encoder_output, tgt_mask):
+        """@brief Forward pass for Decoder class.
+
+        @param x The input tensor of shape [batch_size, seq_len].
+        @param encoder_output The Output of Encoder of shape [batch_size, seq_len , d_model].
+        @param tgt_mask The tgt_mask tensor of shape [1, 1, seq_len, seq_len].
+        @return The output tensor of shape [batch_size, seq_len, d_model].
+        """
+        x = self.input_embedding(x)
+        x = self.positional_encoding(x)
+        for layer in self.layers:
+            x = layer(x, encoder_output, tgt_mask)
         return x
 
 
@@ -318,21 +452,35 @@ def main():
     d_model = 512
     vocab_size = 10000
     seq_len = 128
-    batch_size = 10
+    batch_size = 5
     dropout = 0.1
     num_heads = 8
     d_ff = 2048
     eps = 1e-5
     num_layers = 6
+    PAD_IDX = 0
 
     x = torch.randint(1, 10, (batch_size, seq_len))
+    src_mask = x == PAD_IDX
+    src_mask = src_mask.unsqueeze(1).unsqueeze(2)
+    tgt_mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(1)
     print(f"X.shape: {x.shape}, dtype: {x.dtype}")
+    print(f"src_mask.shape: {src_mask.shape}, dtype: {src_mask.dtype}")
 
     encoder = Encoder(
         d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, seq_len
     )
-    x = encoder(x)
+    x = encoder(x, src_mask)
     print(f"Encoder.shape: {x.shape}, dtype: {x.dtype}")
+
+    y = torch.randint(1, 10, (batch_size, seq_len))
+    print(f"Y.shape: {y.shape}, dtype: {y.dtype}")
+
+    decoder = Decoder(
+        d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, seq_len
+    )
+    y = decoder(y, x, tgt_mask)
+    print(f"Decoder.shape: {y.shape}, dtype: {y.dtype}")
 
 
 if __name__ == "__main__":
