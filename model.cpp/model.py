@@ -271,7 +271,7 @@ class ResidualConnection(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    """@brief Implements the EncoderBlock.
+    """@brief Implements the EncoderBlock class.
 
     @details Initializes MHA -> Residual_MHA -> FFN -> Residual_FFN.
     """
@@ -356,7 +356,7 @@ class Encoder(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    """@brief Implements the Decoder Block.
+    """@brief Implements the DecoderBlock class.
 
     @details Initializes Masked MHA -> Residual_Masked_MHA -> MHA -> Residual_MHA -> FFN -> Residual_FFN.
     """
@@ -420,7 +420,7 @@ class Decoder(nn.Module):
         @param dropout The Probability of an element to be zeroed.
         @param d_ff The dimensionality of the inner-layer.
         @param eps Epsilon for layer norm.
-        @param num_layers The number of encoder layers.
+        @param num_layers The number of decoder layers.
         @param max_seq_len The maximum size of input tokens.
         """
         super().__init__()
@@ -448,6 +448,58 @@ class Decoder(nn.Module):
         return x
 
 
+class Transformer(nn.Module):
+    """@brief Implements the Transformer class.
+
+    @details Initializes Encoder, Decoder class and output layer connected to decoder.
+    """
+
+    def __init__(
+        self,
+        d_model,
+        vocab_size,
+        num_heads,
+        dropout,
+        d_ff,
+        eps,
+        num_layers,
+        max_seq_len,
+    ):
+        """@brief Initializes the Transformer class.
+
+        @param d_model The dimensionality of the embeddings.
+        @param vocab_size The size of the input vocabulary.
+        @param num_heads The number of parallel attention layers or heads.
+        @param dropout The Probability of an element to be zeroed.
+        @param d_ff The dimensionality of the inner-layer.
+        @param eps Epsilon for layer norm.
+        @param num_layers The number of encoder and decoder layers.
+        @param max_seq_len The maximum size of input tokens.
+        """
+        super().__init__()
+        self.encoder = Encoder(
+            d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, max_seq_len
+        )
+        self.decoder = Decoder(
+            d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, max_seq_len
+        )
+        self.output_layer = nn.Linear(d_model, vocab_size)
+
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        """@brief Forward pass for Transformer class.
+
+        @param src The input tensor of shape [batch_size, seq_len] for encoder.
+        @param tgt The input tensor of shape [batch_size, seq_len] for decoder.
+        @param src_mask The src_mask tensor of shape [1, 1, seq_len, seq_len] for encoder.
+        @param tgt_mask The tgt_mask tensor of shape [1, 1, seq_len, seq_len] for decoder.
+        @return The output tensor of shape [batch_size, seq_len, vocab_size].
+        """
+        enc_output = self.encoder(src, src_mask)
+        dec_output = self.decoder(tgt, enc_output, tgt_mask)
+        output = self.output_layer(dec_output)
+        return output
+
+
 def main():
     d_model = 512
     vocab_size = 10000
@@ -463,24 +515,36 @@ def main():
     x = torch.randint(1, 10, (batch_size, seq_len))
     src_mask = x == PAD_IDX
     src_mask = src_mask.unsqueeze(1).unsqueeze(2)
-    tgt_mask = torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0).unsqueeze(1)
     print(f"X.shape: {x.shape}, dtype: {x.dtype}")
     print(f"src_mask.shape: {src_mask.shape}, dtype: {src_mask.dtype}")
 
-    encoder = Encoder(
-        d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, seq_len
-    )
-    x = encoder(x, src_mask)
-    print(f"Encoder.shape: {x.shape}, dtype: {x.dtype}")
-
     y = torch.randint(1, 10, (batch_size, seq_len))
+    # Shift outputs to right
+    y = y[:, :-1]
+    new_seq_len = y.size(1)
+    tgt_mask = (
+        torch.tril(torch.ones(new_seq_len, new_seq_len)).unsqueeze(0).unsqueeze(1)
+    )
     print(f"Y.shape: {y.shape}, dtype: {y.dtype}")
+    print(f"tgt_mask.shape: {tgt_mask.shape}, dtype: {tgt_mask.dtype}")
 
-    decoder = Decoder(
+    transformer = Transformer(
         d_model, vocab_size, num_heads, dropout, d_ff, eps, num_layers, seq_len
     )
-    y = decoder(y, x, tgt_mask)
-    print(f"Decoder.shape: {y.shape}, dtype: {y.dtype}")
+
+    # Forward pass
+    output = transformer(x, y, src_mask, tgt_mask)
+    print(f"Transformer.shape: {output.shape}, dtype: {output.dtype}")
+
+    total_params = sum(p.numel() for p in transformer.parameters())
+    print(f"Total number of parameters = {total_params:,}")
+
+    total_size_bytes = total_params * 4
+    total_size_mb = total_size_bytes / (1024 * 1024)
+    print(f"The size of the model: {total_size_mb:.2f} MB")
+
+    for name, param in transformer.named_parameters():
+        print(f"{name:60} {param.numel():,} params")
 
 
 if __name__ == "__main__":
